@@ -1,9 +1,6 @@
 package aws.services.cloudsearchv2;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -11,12 +8,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpVersion;
 import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.fluent.Request;
-import org.apache.http.client.fluent.Response;
-import org.apache.http.entity.ContentType;
 
 import aws.services.cloudsearchv2.documents.AmazonCloudSearchAddRequest;
 import aws.services.cloudsearchv2.documents.AmazonCloudSearchDeleteRequest;
@@ -32,6 +24,7 @@ import com.amazonaws.metrics.RequestMetricCollector;
 import com.amazonaws.util.json.JSONArray;
 import com.amazonaws.util.json.JSONException;
 import com.amazonaws.util.json.JSONObject;
+import com.squareup.okhttp.Response;
 
 public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv2.AmazonCloudSearchClient {
     private String searchEndpoint;
@@ -196,12 +189,12 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 	 * @throws AwsCSMalformedRequestException 
 	 * @throws AwsCSInternalServerException 
 	 */
-	public void addDocuments(List<AmazonCloudSearchAddRequest> documents) throws JSONException, AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
+	public HttpResponse addDocuments(List<AmazonCloudSearchAddRequest> documents) throws JSONException, AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
 		JSONArray docs = new JSONArray();
 		for(AmazonCloudSearchAddRequest doc : documents) {
 			docs.put(toJSON(doc));
 		}
-		updateDocumentRequest(docs.toString());
+		return updateDocumentRequest(docs.toString());
 	}
 	
 	
@@ -214,10 +207,10 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 	 * @throws AwsCSInternalServerException
 	 * @throws JSONException
 	 */
-	public void deleteDocument(AmazonCloudSearchDeleteRequest document) throws AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException, JSONException {
+	public HttpResponse deleteDocument(AmazonCloudSearchDeleteRequest document) throws AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException, JSONException {
 		JSONArray docs = new JSONArray();
 		docs.put(toJSON(document));
-		updateDocumentRequest(docs.toString());
+		return updateDocumentRequest(docs.toString());
 	}	
 
 	/**
@@ -229,28 +222,23 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 	 * @throws AwsCSInternalServerException
 	 * @throws JSONException
 	 */
-	public void deleteDocuments(List<AmazonCloudSearchDeleteRequest> documents) throws JSONException, AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
+	public HttpResponse deleteDocuments(List<AmazonCloudSearchDeleteRequest> documents) throws JSONException, AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
 		JSONArray docs = new JSONArray();
 		for(AmazonCloudSearchDeleteRequest doc : documents) {
 			docs.put(toJSON(doc));
 		}
-		updateDocumentRequest(docs.toString());
+		return updateDocumentRequest(docs.toString());
 	}
 	
-	private void updateDocumentRequest(String body) throws AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
+	private HttpResponse updateDocumentRequest(String body) throws AmazonCloudSearchRequestException, AmazonCloudSearchInternalServerException {
+		int statusCode = -1;
+		String responseBody = null;
 		try {
-			Response response = Request.Post("https://" + getDocumentEndpoint() + "/2013-01-01/documents/batch")
-			        .useExpectContinue()
-			        .version(HttpVersion.HTTP_1_1)
-			        .addHeader("Accept", ContentType.APPLICATION_JSON.getMimeType())
-			        .bodyString(body, ContentType.APPLICATION_JSON)
-			        .execute();
-
-			HttpResponse resp = response.returnResponse();
+			Response resp = HttpClient.sendDocument(body, getDocumentEndpoint());
 			
-			int statusCode = resp.getStatusLine().getStatusCode();
+			statusCode = resp.code();
 			if(statusCode >= 400 && statusCode < 500) {
-				throw new AmazonCloudSearchRequestException(addDocumentErrorMessage(statusCode), body, inputStreamToString(resp.getEntity().getContent()));
+				throw new AmazonCloudSearchRequestException(addDocumentErrorMessage(statusCode), body, resp.body().string());
 			} else if(statusCode >= 500 && statusCode < 600){
 				throw new AmazonCloudSearchInternalServerException("Internal Server Error. Please try again as this might be a transient error condition.");
 			}
@@ -259,17 +247,7 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 		} catch (IOException e) {
 			throw new AmazonCloudSearchInternalServerException(e);
 		}
-	}
-	
-	private String inputStreamToString(InputStream in) throws IOException {
-		StringWriter output = new StringWriter();
-		InputStreamReader input = new InputStreamReader(in);
-		char[] buffer = new char[1024 * 4];
-		int n = 0;
-		while (-1 != (n = input.read(buffer))) {
-			output.write(buffer, 0, n);
-		}
-		return output.toString();
+		return new HttpResponse(statusCode, responseBody);
 	}
 
 	private String addDocumentErrorMessage(int statusCode) {
@@ -297,20 +275,20 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 	private Object toJSON(AmazonCloudSearchDeleteRequest document) throws JSONException {
 		JSONObject doc = new JSONObject();
 		doc.put("type", "delete");
-		doc.put("id", document.id.toLowerCase());
-		doc.put("version", document.version);
+		doc.put("id", document.getId().toLowerCase());
+		doc.put("version", document.getVersion());
 		return doc;
 	}
 	
 	private JSONObject toJSON(AmazonCloudSearchAddRequest document) throws JSONException {
 		JSONObject doc = new JSONObject();
 		doc.put("type", "add");
-		doc.put("id", document.id.toLowerCase());
-		doc.put("version", document.version);
-		doc.put("lang", document.lang);
+		doc.put("id", document.getId().toLowerCase());
+		doc.put("version", document.getVersion());
+		doc.put("lang", document.getLang());
 		
 		JSONObject fields = new JSONObject();
-		for(Map.Entry<String, Object> entry : document.fields.entrySet()) {
+		for(Map.Entry<String, Object> entry : document.getFields().entrySet()) {
 			if(entry.getValue() instanceof Collection) {
 				JSONArray array = new JSONArray();
 				Iterator i = ((Collection)entry.getValue()).iterator();
@@ -376,16 +354,11 @@ public class AmazonCloudSearchClient extends com.amazonaws.services.cloudsearchv
 		AmazonCloudSearchResult result = null;
 		
 		try {
-			Response response = Request.Get("https://" + getSearchEndpoint() + "/2013-01-01/search?" + query.build())
-			        .useExpectContinue()
-			        .version(HttpVersion.HTTP_1_1)
-			        .addHeader("Accept", ContentType.APPLICATION_JSON.getMimeType())
-			        .execute();
-
-			HttpResponse resp = response.returnResponse();
-			String responseBody = inputStreamToString(resp.getEntity().getContent());
+			Response resp = HttpClient.sendSearch(query.build(), getSearchEndpoint());
 			
-			int statusCode = resp.getStatusLine().getStatusCode();
+			String responseBody = resp.body().string();
+			
+			int statusCode = resp.code();
 			if(statusCode >= 400 && statusCode < 500) {
 				throw new AmazonCloudSearchRequestException(addDocumentErrorMessage(statusCode), "", responseBody);
 			} else if(statusCode >= 500 && statusCode < 600){
